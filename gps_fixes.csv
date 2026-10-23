@@ -1,4 +1,4 @@
-t_s,lat,lon,speed_mps,heading_deg,dist_m,speed_source
+ts,lat,lon,speed_mps,heading_deg,dist_m,speed_source
 0.0,44.0680154,-121.2908262,6.91,358.8,0.0,osrm_estimate
 10.0,44.0681788,-121.2914683,7.01,293.9,69.2,osrm_estimate
 20.0,44.0683116,-121.2923141,7.09,290.9,138.7,osrm_estimate

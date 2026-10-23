@@ -26,7 +26,7 @@ def haversine_distance(points1, points2):
     p1 = np.asarray(points1, dtype=float)
     p2 = np.asarray(points2, dtype=float)
     if p1.shape[-1] != 2 or p2.shape[-1] != 2:
-        raise ValueError("points1 and points2 must each have shape (N, 2): [lat, lon]")
+        raise ValueError(f"points1 ({p1.shape=}) and points2 ({p2.shape}) must each have shape (N, 2): [lat, lon]")
 
     lat1 = np.radians(p1[..., 0])
     lon1 = np.radians(p1[..., 1])
