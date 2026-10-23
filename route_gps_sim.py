@@ -5,12 +5,11 @@ route_gps_sim.py - simulate GPS fixes along a driving route between two addresse
 Pipeline
 --------
 1. Geocode both addresses with OpenStreetMap Nominatim.
-2. Request a driving route from an OSRM server, with per-segment annotations
-   that include the posted speed limit (``maxspeed``) from OpenStreetMap tags.
-3. Assign each route segment a travel speed:
-     * the posted limit, if OSM has one for that way;
-     * otherwise a fallback: either OSRM's own speed estimate for the segment
-       (the default) or a fixed speed you give with --default-speed-mph.
+2. Request a driving route from an OSRM server, with per-segment distance/
+   duration annotations.
+3. Assign each route segment a travel speed: either OSRM's own speed
+   estimate for the segment (the default) or a fixed speed you give with
+   --default-speed-mph.
 4. Walk the route at those speeds and emit a fix every --interval seconds
    (default 10 s), starting at t = 0 at the origin.
 
@@ -21,7 +20,12 @@ lat, lon     WGS84 degrees (with optional Gaussian noise; see --noise-m)
 speed_mps    travel speed on the current segment, m/s
 heading_deg  course over ground, degrees clockwise from true north
 dist_m       distance travelled along the route, metres (noise-free)
-speed_source "posted", "osrm_estimate" or "default"
+speed_source "osrm_estimate" or "default"
+
+Note: OSRM's HTTP API does not expose the posted OSM ``maxspeed`` tag via
+route annotations (only ``distance``, ``duration``, ``nodes``, ``datasources``,
+``weight`` and ``speed`` are supported), so segment speeds are always either
+OSRM's own estimate or the fixed --default-speed-mph value.
 
 Requirements: Python 3.8+, ``requests``.
 
@@ -50,6 +54,8 @@ import time
 
 import requests
 
+from utils import haversine_distance
+
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 DEFAULT_OSRM_URL = "https://router.project-osrm.org"
 DEFAULT_USER_AGENT = "route-gps-sim/1.0 (set --user-agent to your contact info)"
@@ -63,12 +69,8 @@ KPH_TO_MPS = 1.0 / 3.6
 # Geometry helpers
 # --------------------------------------------------------------------------- #
 def haversine_m(lat1, lon1, lat2, lon2):
-    """Great-circle distance in metres."""
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = p2 - p1
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
+    """Great-circle distance in metres between a single pair of points."""
+    return float(haversine_distance([[lat1, lon1]], [[lat2, lon2]])[0])
 
 
 def bearing_deg(lat1, lon1, lat2, lon2):
@@ -101,10 +103,14 @@ def fetch_route(start, end, session, osrm_url):
     """
     Fetch a driving route from OSRM.
 
-    Returns (coords, osrm_speeds, maxspeeds):
+    Returns (coords, osrm_speeds):
       coords       list of (lat, lon) vertices, length N
       osrm_speeds  list of OSRM-estimated segment speeds in m/s, length N-1
-      maxspeeds    list of OSRM maxspeed annotation dicts, length N-1
+
+    Note: OSRM's route annotations do not include the posted OSM ``maxspeed``
+    tag (valid values are distance, duration, nodes, datasources, weight and
+    speed), so this only fetches distance/duration and derives OSRM's own
+    speed estimate per segment.
     """
     url = (
         f"{osrm_url.rstrip('/')}/route/v1/driving/"
@@ -113,7 +119,7 @@ def fetch_route(start, end, session, osrm_url):
     params = {
         "overview": "full",
         "geometries": "geojson",
-        "annotations": "distance,duration,maxspeed",
+        "annotations": "distance,duration",
         "steps": "false",
     }
     resp = session.get(url, params=params, timeout=60)
@@ -125,55 +131,38 @@ def fetch_route(start, end, session, osrm_url):
     route = data["routes"][0]
     coords = [(lat, lon) for lon, lat in route["geometry"]["coordinates"]]
 
-    osrm_speeds, maxspeeds = [], []
+    osrm_speeds = []
     for leg in route["legs"]:
         ann = leg.get("annotation", {})
         dists = ann.get("distance", [])
         durs = ann.get("duration", [])
-        n = len(dists)
         for d, t in zip(dists, durs):
             osrm_speeds.append(d / t if t > 0 else 0.0)
-        maxspeeds.extend(ann.get("maxspeed", [{"unknown": True}] * n))
 
     if len(osrm_speeds) != len(coords) - 1:
         raise SystemExit(
             f"Route geometry has {len(coords)} vertices but {len(osrm_speeds)} "
             "annotated segments; cannot align speeds to geometry."
         )
-    return coords, osrm_speeds, maxspeeds
+    return coords, osrm_speeds
 
 
 # --------------------------------------------------------------------------- #
 # Speed assignment
 # --------------------------------------------------------------------------- #
-def parse_maxspeed(entry):
-    """Convert an OSRM maxspeed annotation to m/s, or None if not posted."""
-    if not isinstance(entry, dict) or "speed" not in entry:
-        return None  # {"unknown": true} or {"none": true} (no limit)
-    unit = entry.get("unit", "km/h").lower()
-    speed = float(entry["speed"])
-    if unit in ("mph", "mi/h"):
-        return speed * MPH_TO_MPS
-    return speed * KPH_TO_MPS
-
-
-def assign_speeds(osrm_speeds, maxspeeds, default_mps):
+def assign_speeds(osrm_speeds, default_mps):
     """Choose a travel speed (m/s) and its source label for each segment."""
     speeds, sources = [], []
-    for est, ms in zip(osrm_speeds, maxspeeds):
-        posted = parse_maxspeed(ms)
-        if posted and posted > 0:
-            speeds.append(posted)
-            sources.append("posted")
-        elif default_mps is not None:
+    for est in osrm_speeds:
+        if default_mps is not None:
             speeds.append(default_mps)
             sources.append("default")
         elif est > 0:
             speeds.append(est)
             sources.append("osrm_estimate")
         else:
-            # Zero-length or zero-duration segment with no limit; any positive
-            # speed works because it contributes no time.
+            # Zero-length or zero-duration segment; any positive speed works
+            # because it contributes no time.
             speeds.append(1.0)
             sources.append("osrm_estimate")
     return speeds, sources
@@ -263,7 +252,8 @@ def write_csv(fixes, path):
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Simulate GPS fixes along a driving route at posted speed limits."
+        description="Simulate GPS fixes along a driving route using OSRM's "
+                     "segment speed estimates."
     )
     ap.add_argument("origin", help="starting address")
     ap.add_argument("destination", help="destination address")
@@ -272,8 +262,8 @@ def main(argv=None):
     ap.add_argument("--interval", type=float, default=10.0,
                     help="seconds between fixes (default: 10)")
     ap.add_argument("--default-speed-mph", type=float, default=None,
-                    help="speed for segments with no posted limit; if omitted, "
-                         "OSRM's own speed estimate is used")
+                    help="fixed speed for every segment; if omitted, OSRM's "
+                         "own speed estimate is used")
     ap.add_argument("--include-arrival", action="store_true",
                     help="append a final fix at the exact arrival time")
     ap.add_argument("--noise-m", type=float, default=0.0,
@@ -297,10 +287,10 @@ def main(argv=None):
     print(f"Origin      {start[0]:.6f}, {start[1]:.6f}", file=sys.stderr)
     print(f"Destination {end[0]:.6f}, {end[1]:.6f}", file=sys.stderr)
 
-    coords, osrm_speeds, maxspeeds = fetch_route(start, end, session, args.osrm_url)
+    coords, osrm_speeds = fetch_route(start, end, session, args.osrm_url)
     default_mps = (args.default_speed_mph * MPH_TO_MPS
                    if args.default_speed_mph is not None else None)
-    speeds, sources = assign_speeds(osrm_speeds, maxspeeds, default_mps)
+    speeds, sources = assign_speeds(osrm_speeds, default_mps)
 
     fixes, total_t, total_d = sample_route(
         coords, speeds, sources, args.interval, args.include_arrival
@@ -310,10 +300,11 @@ def main(argv=None):
 
     write_csv(fixes, args.output)
 
-    posted = sum(1 for s in sources if s == "posted")
+    estimated = sum(1 for s in sources if s == "osrm_estimate")
     print(
-        f"Route {total_d / 1000:.2f} km, {total_t / 60:.1f} min at limits; "
-        f"{len(fixes)} fixes; {posted}/{len(sources)} segments had a posted limit.",
+        f"Route {total_d / 1000:.2f} km, {total_t / 60:.1f} min; "
+        f"{len(fixes)} fixes; {estimated}/{len(sources)} segments used OSRM's "
+        "speed estimate.",
         file=sys.stderr,
     )
     if args.output != "-":
