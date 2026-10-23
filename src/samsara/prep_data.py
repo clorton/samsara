@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-prep_data.py - post-process GPS fixes produced by route_gps_sim.py.
+samsara.prep_data - post-process GPS fixes produced by samsara-get-data.
+Installed as the ``samsara-prep-data`` console script.
 
 Pipeline
 --------
-1. Read a fixes CSV (as produced by route_gps_sim.py) and keep only the
+1. Read a fixes CSV (as produced by samsara-get-data) and keep only the
    ts, lat, lon columns.
 2. Remove N contiguous dropout windows (N given by --num-gaps), each
    spanning a random duration between --gap-min-minutes and
@@ -15,7 +16,7 @@ Pipeline
 
 Usage
 -----
-    python prep_data.py fixes.csv -n 2 -o prepped.csv
+    samsara-prep-data fixes.csv -n 2 -o prepped.csv
 """
 
 import argparse
@@ -109,7 +110,7 @@ def main(argv=None):
         "contiguous dropout windows, and shuffle the rows."
     )
     ap.add_argument(
-        "input", help="input fixes CSV (from route_gps_sim.py), or '-' for stdin"
+        "input", help="input fixes CSV (from samsara-get-data), or '-' for stdin"
     )
     ap.add_argument(
         "-o", "--output", default="-",

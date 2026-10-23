@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-route_gps_sim.py - simulate GPS fixes along a driving route between two addresses.
+samsara.route_gps_sim - simulate GPS fixes along a driving route between two
+addresses. Installed as the ``samsara-get-data`` console script.
 
 Pipeline
 --------
@@ -31,7 +32,7 @@ Requirements: Python 3.8+, ``requests``.
 
 Usage
 -----
-    python route_gps_sim.py "1600 Amphitheatre Pkwy, Mountain View, CA" \
+    samsara-get-data "1600 Amphitheatre Pkwy, Mountain View, CA" \
         "1 Infinite Loop, Cupertino, CA" -o fixes.csv
 
 Notes
@@ -54,7 +55,7 @@ import time
 
 import requests
 
-from utils import haversine_distance
+from samsara.utils import haversine_distance
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 DEFAULT_OSRM_URL = "https://router.project-osrm.org"

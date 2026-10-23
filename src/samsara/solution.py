@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from utils import haversine_distance as hdist
+from samsara.utils import haversine_distance as hdist
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Trip:
     end_ts: int
     distance: float
 
-def get_gps_fixes(filename: str|Path, vehicle_id: str = "Vehicle_1", start_ts: int = 0, end_ts: int = np.uint64.max) -> list[Point]:
+def get_gps_fixes(filename: str|Path, vehicle_id: str = "Vehicle_1", start_ts: int = 0, end_ts: int = np.iinfo(np.uint64).max) -> list[Point]:
     fixes = pd.read_csv(filename)
     return [Point(*t[0:3]) for t in fixes.itertuples(index=False)]
 
@@ -56,7 +56,7 @@ def get_trips(stamps: NDArray[np.uint64], points: NDArray[np.float64], vehicle_i
 
     return trips
 
-def main(fixes_filename: str = "test_fixes.csv", vehicle_id: str = "Vehicle_1", max_gap: int = 600):
+def run(fixes_filename: str = "test_fixes.csv", vehicle_id: str = "Vehicle_1", max_gap: int = 600):
 
     fixes = get_gps_fixes(fixes_filename)
 
@@ -74,11 +74,15 @@ def main(fixes_filename: str = "test_fixes.csv", vehicle_id: str = "Vehicle_1", 
     return
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = ArgumentParser()
     parser.add_argument("source", type=Path, default="gps_fixes.csv")
     parser.add_argument("-v", "--vehicle", type=str, default="Vehicle_1")
     parser.add_argument("-m", "--max-gap", type=int, default=600)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    main(args.source, args.vehicle, args.max_gap)
+    run(args.source, args.vehicle, args.max_gap)
+
+
+if __name__ == "__main__":
+    main()

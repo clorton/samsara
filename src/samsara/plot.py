@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-plot.py - plot a GPS track (lat/lon) from route_gps_sim.py / prep_data.py output.
+samsara.plot - plot a GPS track (lat/lon) from samsara-get-data /
+samsara-prep-data output. Installed as the ``samsara-plot`` console script.
 
 Two use cases
 -------------
-1. Contiguous: the raw output of route_gps_sim.py - fixes are evenly spaced
+1. Contiguous: the raw output of samsara-get-data - fixes are evenly spaced
    in time with no gaps, forming one continuous trip.
 2. Multi-trip: output that has had one or more dropout windows removed
-   (e.g. by prep_data.py) - the remaining fixes form several contiguous
-   trips separated by large jumps in time. Each trip is drawn as its own
-   segment/color so the dropouts are visually obvious.
+   (e.g. by samsara-prep-data) - the remaining fixes form several
+   contiguous trips separated by large jumps in time. Each trip is drawn
+   as its own segment/color so the dropouts are visually obvious.
 
 Both cases are handled by the same function, ``plot_fixes``: it looks for
 gaps in the timestamps larger than ``gap_threshold_s`` (auto-detected from
@@ -17,13 +18,13 @@ the data if not given) and starts a new trip/segment after each one. For
 contiguous data this naturally yields a single segment.
 
 In both cases, the fixes passed in must already be sorted by ts ascending.
-Note that prep_data.py shuffles its output rows, so that CSV must be
+Note that samsara-prep-data shuffles its output rows, so that CSV must be
 re-sorted by ts before plotting (``read_fixes`` below does this for you).
 
 Usage
 -----
-    python plot.py fixes.csv -o route.png
-    python plot.py prepped.csv -o multi_trip.png
+    samsara-plot fixes.csv -o route.png
+    samsara-plot prepped.csv -o multi_trip.png
 """
 
 import argparse

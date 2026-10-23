@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared geometry/math helpers for route_gps_sim.py and prep_data.py."""
+"""Shared geometry/math helpers for the samsara package."""
 
 import numpy as np
 
