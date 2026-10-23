@@ -25,11 +25,12 @@ re-sorted by ts before plotting (``read_fixes`` below does this for you).
 Basemap
 -------
 By default, US state outlines are drawn under the track using a small
-GeoJSON file bundled with the package (``samsara/data/us_states.geojson``,
-derived from the US Census Bureau's public-domain 2022 cartographic
-boundary file). This requires no network access and no extra heavyweight
-GIS dependencies - just plain WGS84 lon/lat, consistent with the fixes data
-itself, so no reprojection is needed. Pass --no-basemap to omit it.
+GeoJSON file bundled with the package as a zip archive
+(``samsara/data/us_states.geojson.zip``, derived from the US Census
+Bureau's public-domain 2022 cartographic boundary file). This requires no
+network access and no extra heavyweight GIS dependencies - just plain
+WGS84 lon/lat, consistent with the fixes data itself, so no reprojection
+is needed. Pass --no-basemap to omit it.
 
 Because this is a simple equirectangular (lon/lat-as-x/y) plot rather than
 a true map projection, the same latitude-dependent aspect-ratio correction
@@ -47,6 +48,7 @@ import argparse
 import csv
 import json
 import sys
+import zipfile
 from importlib import resources
 
 import matplotlib.pyplot as plt
@@ -54,7 +56,8 @@ import numpy as np
 from matplotlib.path import Path as MplPath
 from matplotlib.patches import PathPatch
 
-US_STATES_RESOURCE = ("samsara.data", "us_states.geojson")
+US_STATES_ZIP_RESOURCE = ("samsara.data", "us_states.geojson.zip")
+US_STATES_ZIP_MEMBER = "us_states.geojson"
 
 
 def read_fixes(path):
@@ -118,11 +121,14 @@ def split_trips(ts, gap_threshold_s=None):
 def load_us_states():
     """
     Load the bundled US state boundary GeoJSON (FeatureCollection, plain
-    WGS84 lon/lat degree coordinates, Polygon/MultiPolygon features).
+    WGS84 lon/lat degree coordinates, Polygon/MultiPolygon features), stored
+    zip-compressed as package data.
     """
-    package, filename = US_STATES_RESOURCE
-    with resources.files(package).joinpath(filename).open("r") as f:
-        return json.load(f)
+    package, filename = US_STATES_ZIP_RESOURCE
+    with resources.files(package).joinpath(filename).open("rb") as f, \
+            zipfile.ZipFile(f) as zf, \
+            zf.open(US_STATES_ZIP_MEMBER) as member:
+        return json.load(member)
 
 
 def _polygon_to_path(coordinate_rings):
