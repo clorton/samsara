@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 samsara.plot - plot a GPS track (lat/lon) from samsara-get-data /
-samsara-prep-data output. Installed as the ``samsara-plot`` console script.
+samsara-prep-data output, with an optional United States basemap drawn
+underneath. Installed as the ``samsara-plot`` console script.
 
 Two use cases
 -------------
@@ -21,18 +22,39 @@ In both cases, the fixes passed in must already be sorted by ts ascending.
 Note that samsara-prep-data shuffles its output rows, so that CSV must be
 re-sorted by ts before plotting (``read_fixes`` below does this for you).
 
+Basemap
+-------
+By default, US state outlines are drawn under the track using a small
+GeoJSON file bundled with the package (``samsara/data/us_states.geojson``,
+derived from the US Census Bureau's public-domain 2022 cartographic
+boundary file). This requires no network access and no extra heavyweight
+GIS dependencies - just plain WGS84 lon/lat, consistent with the fixes data
+itself, so no reprojection is needed. Pass --no-basemap to omit it.
+
+Because this is a simple equirectangular (lon/lat-as-x/y) plot rather than
+a true map projection, the same latitude-dependent aspect-ratio correction
+used for the track is applied to the basemap so the two line up and neither
+looks stretched.
+
 Usage
 -----
     samsara-plot fixes.csv -o route.png
     samsara-plot prepped.csv -o multi_trip.png
+    samsara-plot fixes.csv -o route.png --no-basemap
 """
 
 import argparse
 import csv
+import json
 import sys
+from importlib import resources
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.path import Path as MplPath
+from matplotlib.patches import PathPatch
+
+US_STATES_RESOURCE = ("samsara.data", "us_states.geojson")
 
 
 def read_fixes(path):
@@ -93,11 +115,67 @@ def split_trips(ts, gap_threshold_s=None):
     return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
 
 
-def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
+def load_us_states():
+    """
+    Load the bundled US state boundary GeoJSON (FeatureCollection, plain
+    WGS84 lon/lat degree coordinates, Polygon/MultiPolygon features).
+    """
+    package, filename = US_STATES_RESOURCE
+    with resources.files(package).joinpath(filename).open("r") as f:
+        return json.load(f)
+
+
+def _polygon_to_path(coordinate_rings):
+    """
+    Build a single matplotlib Path from a GeoJSON polygon's coordinate
+    rings (first ring is the exterior, any further rings are holes),
+    using Path's standard "subsequent polygons are holes" convention via
+    alternating MOVETO/LINETO/CLOSEPOLY codes.
+    """
+    vertices = []
+    codes = []
+    for ring in coordinate_rings:
+        if len(ring) < 3:
+            continue
+        vertices.append(ring[0])
+        codes.append(MplPath.MOVETO)
+        vertices.extend(ring[1:])
+        codes.extend([MplPath.LINETO] * (len(ring) - 1))
+        vertices.append(ring[0])
+        codes.append(MplPath.CLOSEPOLY)
+    return MplPath(vertices, codes)
+
+
+def draw_us_basemap(ax, facecolor="#f0f0e8", edgecolor="#999999", linewidth=0.5,
+                     zorder=0):
+    """
+    Draw US state (plus DC/Puerto Rico) outlines on ax, in plain lon/lat
+    degree coordinates, filling each state's Polygon/MultiPolygon geometry
+    (honoring holes) as a matplotlib PathPatch.
+
+    Does not touch axis limits/aspect; call this before setting those so
+    the subsequently-plotted track + axis limits take precedence.
+    """
+    data = load_us_states()
+    for feature in data["features"]:
+        geom = feature["geometry"]
+        polygons = (geom["coordinates"] if geom["type"] == "MultiPolygon"
+                    else [geom["coordinates"]])
+        for rings in polygons:
+            path = _polygon_to_path(rings)
+            ax.add_patch(PathPatch(
+                path, facecolor=facecolor, edgecolor=edgecolor,
+                linewidth=linewidth, zorder=zorder,
+            ))
+
+
+def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None,
+               basemap=True, basemap_padding_deg=2.0):
     """
     Plot a GPS track (longitude on x, latitude on y), splitting it into
     separate colored trip segments wherever a time gap larger than
-    gap_threshold_s occurs (auto-detected if None).
+    gap_threshold_s occurs (auto-detected if None), optionally drawing a US
+    state-outline basemap underneath.
 
     Works for both contiguous single-trip data (one segment) and
     multi-trip data with dropout windows removed (one segment per
@@ -115,6 +193,14 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
         Axes to draw on; a new figure/axes is created if omitted.
     title : str, optional
         Plot title; a sensible default is used if omitted.
+    basemap : bool, optional
+        If True (default), draw the bundled US state-outline basemap
+        underneath the track. No network access required.
+    basemap_padding_deg : float, optional
+        Degrees of padding added around the track's bounding box when
+        framing the view (only relevant when basemap=True), so nearby
+        state borders/context are visible without zooming out to the
+        whole country. Default 2.0.
 
     Returns
     -------
@@ -131,6 +217,9 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 8))
 
+    if basemap:
+        draw_us_basemap(ax, zorder=0)
+
     trips = split_trips(ts, gap_threshold_s)
 
     cmap = plt.get_cmap("tab10")
@@ -144,12 +233,18 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
         ax.scatter(lon[e - 1], lat[e - 1], color=color, marker="s", s=40,
                    edgecolors="black", linewidths=0.5, zorder=3)
 
+    if basemap:
+        pad = basemap_padding_deg
+        ax.set_xlim(lon.min() - pad, lon.max() + pad)
+        ax.set_ylim(lat.min() - pad, lat.max() + pad)
+
     # Approximate equirectangular correction: at latitude phi, one degree
     # of longitude spans cos(phi) as much ground distance as one degree of
     # latitude, so compress the x-axis accordingly for a visually
-    # undistorted track.
+    # undistorted track (and, when present, basemap).
     mean_lat_rad = np.radians(np.mean(lat))
-    ax.set_aspect(1.0 / max(np.cos(mean_lat_rad), 1e-6), adjustable="datalim")
+    adjustable = "box" if basemap else "datalim"
+    ax.set_aspect(1.0 / max(np.cos(mean_lat_rad), 1e-6), adjustable=adjustable)
 
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
@@ -162,9 +257,10 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Plot a GPS fixes CSV (ts, lat, lon), splitting into "
-                     "separate trip segments wherever there's a large gap "
-                     "in time (e.g. from a dropped-data window)."
+        description="Plot a GPS fixes CSV (ts, lat, lon) over a US "
+                     "state-outline basemap, splitting into separate trip "
+                     "segments wherever there's a large gap in time (e.g. "
+                     "from a dropped-data window)."
     )
     ap.add_argument(
         "input", help="input fixes CSV (ts, lat, lon columns), or '-' for stdin"
@@ -179,11 +275,21 @@ def main(argv=None):
              "(default: auto-detected from the data)",
     )
     ap.add_argument("--title", default=None, help="plot title")
+    ap.add_argument(
+        "--no-basemap", dest="basemap", action="store_false",
+        help="don't draw the US state-outline basemap",
+    )
+    ap.add_argument(
+        "--basemap-padding-deg", type=float, default=2.0,
+        help="degrees of padding around the track when framing the view "
+             "with the basemap on (default: 2.0)",
+    )
     args = ap.parse_args(argv)
 
     ts, lat, lon = read_fixes(args.input)
     plot_fixes(ts, lat, lon, gap_threshold_s=args.gap_threshold_s,
-               title=args.title)
+               title=args.title, basemap=args.basemap,
+               basemap_padding_deg=args.basemap_padding_deg)
 
     if args.output:
         plt.savefig(args.output, dpi=150, bbox_inches="tight")
