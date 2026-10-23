@@ -5,13 +5,13 @@ prep_data.py - post-process GPS fixes produced by route_gps_sim.py.
 Pipeline
 --------
 1. Read a fixes CSV (as produced by route_gps_sim.py) and keep only the
-   t_s, lat, lon columns.
+   ts, lat, lon columns.
 2. Remove N contiguous dropout windows (N given by --num-gaps), each
    spanning a random duration between --gap-min-minutes and
    --gap-max-minutes (default 10-15 min), to simulate a device losing its
    fix for a while.
 3. Shuffle the remaining rows so timestamps are no longer in order, while
-   keeping each (t_s, lat, lon) tuple intact.
+   keeping each (ts, lat, lon) tuple intact.
 
 Usage
 -----
@@ -25,22 +25,22 @@ import sys
 
 
 def read_fixes(path):
-    """Read t_s, lat, lon from a fixes CSV, sorted by t_s ascending.
+    """Read ts, lat, lon from a fixes CSV, sorted by ts ascending.
 
-    lat/lon are kept as the original strings (untouched); t_s is parsed to
+    lat/lon are kept as the original strings (untouched); ts is parsed to
     float so gap windows can be computed.
     """
     inp = sys.stdin if path == "-" else open(path, newline="")
     try:
         reader = csv.DictReader(inp)
-        required = {"t_s", "lat", "lon"}
+        required = {"ts", "lat", "lon"}
         missing = required - set(reader.fieldnames or [])
         if missing:
             raise SystemExit(
                 f"Input is missing required column(s): {', '.join(sorted(missing))}"
             )
         rows = [
-            {"t_s": float(row["t_s"]), "lat": row["lat"], "lon": row["lon"]}
+            {"ts": float(row["ts"]), "lat": row["lat"], "lon": row["lon"]}
             for row in reader
         ]
     finally:
@@ -48,7 +48,7 @@ def read_fixes(path):
             inp.close()
     if not rows:
         raise SystemExit("Input has no data rows.")
-    rows.sort(key=lambda r: r["t_s"])
+    rows.sort(key=lambda r: r["ts"])
     return rows
 
 
@@ -83,21 +83,21 @@ def choose_gaps(t_min, t_max, n, min_s, max_s, rng, max_attempts=2000):
 
 
 def drop_gaps(rows, windows):
-    """Remove rows whose t_s falls inside any [start, end) window."""
+    """Remove rows whose ts falls inside any [start, end) window."""
 
     def in_gap(t):
         return any(start <= t < end for start, end in windows)
 
-    return [r for r in rows if not in_gap(r["t_s"])]
+    return [r for r in rows if not in_gap(r["ts"])]
 
 
 def write_csv(rows, path):
     out = sys.stdout if path == "-" else open(path, "w", newline="")
     try:
-        w = csv.DictWriter(out, fieldnames=["t_s", "lat", "lon"])
+        w = csv.DictWriter(out, fieldnames=["ts", "lat", "lon"])
         w.writeheader()
         for r in rows:
-            w.writerow({"t_s": f"{r['t_s']:.1f}", "lat": r["lat"], "lon": r["lon"]})
+            w.writerow({"ts": f"{r['ts']:.1f}", "lat": r["lat"], "lon": r["lon"]})
     finally:
         if out is not sys.stdout:
             out.close()
@@ -105,7 +105,7 @@ def write_csv(rows, path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Strip a GPS fixes CSV down to t_s/lat/lon, drop N "
+        description="Strip a GPS fixes CSV down to ts/lat/lon, drop N "
         "contiguous dropout windows, and shuffle the rows."
     )
     ap.add_argument(
@@ -140,7 +140,7 @@ def main(argv=None):
     rng = random.Random(args.seed)
 
     rows = read_fixes(args.input)
-    t_min, t_max = rows[0]["t_s"], rows[-1]["t_s"]
+    t_min, t_max = rows[0]["ts"], rows[-1]["ts"]
 
     windows = choose_gaps(
         t_min, t_max, args.num_gaps,

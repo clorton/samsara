@@ -15,7 +15,7 @@ Pipeline
 
 Output CSV columns
 ------------------
-t_s          seconds since departure
+ts          seconds since departure
 lat, lon     WGS84 degrees (with optional Gaussian noise; see --noise-m)
 speed_mps    travel speed on the current segment, m/s
 heading_deg  course over ground, degrees clockwise from true north
@@ -203,7 +203,7 @@ def sample_route(coords, speeds, sources, interval_s, include_arrival=False):
         (lat0, lon0), (lat1, lon1) = coords[seg], coords[seg + 1]
         fixes.append(
             {
-                "t_s": t,
+                "ts": t,
                 "lat": lat0 + f * (lat1 - lat0),
                 "lon": lon0 + f * (lon1 - lon0),
                 "speed_mps": speeds[seg],
@@ -225,7 +225,7 @@ def add_noise(fixes, sigma_m, rng):
 
 
 def write_csv(fixes, path):
-    fields = ["t_s", "lat", "lon", "speed_mps", "heading_deg", "dist_m", "speed_source"]
+    fields = ["ts", "lat", "lon", "speed_mps", "heading_deg", "dist_m", "speed_source"]
     out = sys.stdout if path == "-" else open(path, "w", newline="")
     try:
         w = csv.DictWriter(out, fieldnames=fields)
@@ -233,7 +233,7 @@ def write_csv(fixes, path):
         for fx in fixes:
             w.writerow(
                 {
-                    "t_s": f"{fx['t_s']:.1f}",
+                    "ts": f"{fx['ts']:.1f}",
                     "lat": f"{fx['lat']:.7f}",
                     "lon": f"{fx['lon']:.7f}",
                     "speed_mps": f"{fx['speed_mps']:.2f}",

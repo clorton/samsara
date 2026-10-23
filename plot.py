@@ -16,9 +16,9 @@ gaps in the timestamps larger than ``gap_threshold_s`` (auto-detected from
 the data if not given) and starts a new trip/segment after each one. For
 contiguous data this naturally yields a single segment.
 
-In both cases, the fixes passed in must already be sorted by t_s ascending.
+In both cases, the fixes passed in must already be sorted by ts ascending.
 Note that prep_data.py shuffles its output rows, so that CSV must be
-re-sorted by t_s before plotting (``read_fixes`` below does this for you).
+re-sorted by ts before plotting (``read_fixes`` below does this for you).
 
 Usage
 -----
@@ -35,23 +35,23 @@ import numpy as np
 
 
 def read_fixes(path):
-    """Read t_s, lat, lon (as floats) from a fixes CSV, sorted by t_s ascending.
+    """Read ts, lat, lon (as floats) from a fixes CSV, sorted by ts ascending.
 
     Extra columns (speed_mps, heading_deg, ...) are ignored if present, so
     this works on both route_gps_sim.py's raw output and prep_data.py's
-    trimmed t_s/lat/lon output.
+    trimmed ts/lat/lon output.
     """
     inp = sys.stdin if path == "-" else open(path, newline="")
     try:
         reader = csv.DictReader(inp)
-        required = {"t_s", "lat", "lon"}
+        required = {"ts", "lat", "lon"}
         missing = required - set(reader.fieldnames or [])
         if missing:
             raise SystemExit(
                 f"Input is missing required column(s): {', '.join(sorted(missing))}"
             )
         rows = sorted(
-            ((float(r["t_s"]), float(r["lat"]), float(r["lon"])) for r in reader),
+            ((float(r["ts"]), float(r["lat"]), float(r["lon"])) for r in reader),
             key=lambda r: r[0],
         )
     finally:
@@ -59,11 +59,11 @@ def read_fixes(path):
             inp.close()
     if not rows:
         raise SystemExit("Input has no data rows.")
-    t_s, lat, lon = (np.array(col) for col in zip(*rows))
-    return t_s, lat, lon
+    ts, lat, lon = (np.array(col) for col in zip(*rows))
+    return ts, lat, lon
 
 
-def split_trips(t_s, gap_threshold_s=None):
+def split_trips(ts, gap_threshold_s=None):
     """
     Split ascending timestamps into contiguous trip segments.
 
@@ -75,14 +75,14 @@ def split_trips(t_s, gap_threshold_s=None):
     intervals are seconds).
 
     Returns a list of (start_idx, end_idx) index pairs (end exclusive)
-    into t_s, covering the whole array.
+    into ts, covering the whole array.
     """
-    t_s = np.asarray(t_s)
-    n = len(t_s)
+    ts = np.asarray(ts)
+    n = len(ts)
     if n < 2:
         return [(0, n)]
 
-    dt = np.diff(t_s)
+    dt = np.diff(ts)
     if gap_threshold_s is None:
         median_dt = np.median(dt)
         gap_threshold_s = max(median_dt * 5.0, median_dt + 1.0)
@@ -92,7 +92,7 @@ def split_trips(t_s, gap_threshold_s=None):
     return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
 
 
-def plot_fixes(t_s, lat, lon, gap_threshold_s=None, ax=None, title=None):
+def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
     """
     Plot a GPS track (longitude on x, latitude on y), splitting it into
     separate colored trip segments wherever a time gap larger than
@@ -105,8 +105,8 @@ def plot_fixes(t_s, lat, lon, gap_threshold_s=None, ax=None, title=None):
 
     Parameters
     ----------
-    t_s, lat, lon : array-like, shape (N,)
-        Fixes sorted by t_s ascending.
+    ts, lat, lon : array-like, shape (N,)
+        Fixes sorted by ts ascending.
     gap_threshold_s : float, optional
         Minimum time gap, in seconds, that starts a new trip segment.
         Auto-detected from the data if omitted.
@@ -119,18 +119,18 @@ def plot_fixes(t_s, lat, lon, gap_threshold_s=None, ax=None, title=None):
     -------
     matplotlib.axes.Axes
     """
-    t_s = np.asarray(t_s)
+    ts = np.asarray(ts)
     lat = np.asarray(lat)
     lon = np.asarray(lon)
-    if not (len(t_s) == len(lat) == len(lon)):
-        raise ValueError("t_s, lat, and lon must have the same length")
-    if len(t_s) == 0:
+    if not (len(ts) == len(lat) == len(lon)):
+        raise ValueError("ts, lat, and lon must have the same length")
+    if len(ts) == 0:
         raise ValueError("no fixes to plot")
 
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 8))
 
-    trips = split_trips(t_s, gap_threshold_s)
+    trips = split_trips(ts, gap_threshold_s)
 
     cmap = plt.get_cmap("tab10")
     for i, (s, e) in enumerate(trips):
@@ -161,12 +161,12 @@ def plot_fixes(t_s, lat, lon, gap_threshold_s=None, ax=None, title=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Plot a GPS fixes CSV (t_s, lat, lon), splitting into "
+        description="Plot a GPS fixes CSV (ts, lat, lon), splitting into "
                      "separate trip segments wherever there's a large gap "
                      "in time (e.g. from a dropped-data window)."
     )
     ap.add_argument(
-        "input", help="input fixes CSV (t_s, lat, lon columns), or '-' for stdin"
+        "input", help="input fixes CSV (ts, lat, lon columns), or '-' for stdin"
     )
     ap.add_argument(
         "-o", "--output", default=None,
@@ -180,8 +180,8 @@ def main(argv=None):
     ap.add_argument("--title", default=None, help="plot title")
     args = ap.parse_args(argv)
 
-    t_s, lat, lon = read_fixes(args.input)
-    plot_fixes(t_s, lat, lon, gap_threshold_s=args.gap_threshold_s,
+    ts, lat, lon = read_fixes(args.input)
+    plot_fixes(ts, lat, lon, gap_threshold_s=args.gap_threshold_s,
                title=args.title)
 
     if args.output:

@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +24,7 @@ class Trip:
 
 def get_gps_fixes(filename: str|Path, vehicle_id: str = "Vehicle_1", start_ts: int = 0, end_ts: int = np.uint64.max) -> list[Point]:
     fixes = pd.read_csv(filename)
-    return [Point(*t) for t in fixes.itertuples(index=False)]
+    return [Point(*t[0:3]) for t in fixes.itertuples(index=False)]
 
 def get_sorted_data(fixes: list[Point]) -> tuple[NDArray[np.uint64], NDArray[np.float64]]:
     stamps = np.array([f.ts for f in fixes], dtype=np.uint64)
@@ -55,7 +56,7 @@ def get_trips(stamps: NDArray[np.uint64], points: NDArray[np.float64], vehicle_i
 
     return trips
 
-def main(fixes_filename: str = "test_fixes.csv", max_gap: int = 600, vehicle_id: str = "Vehicle_1"):
+def main(fixes_filename: str = "test_fixes.csv", vehicle_id: str = "Vehicle_1", max_gap: int = 600):
 
     fixes = get_gps_fixes(fixes_filename)
 
@@ -63,11 +64,21 @@ def main(fixes_filename: str = "test_fixes.csv", max_gap: int = 600, vehicle_id:
 
     trips = get_trips(stamps, points, vehicle_id, max_gap)
 
+    total = 0
     for i, trip in enumerate(trips):
         print(f"{i}: {trip}")
+        total += trip.distance
+
+    print(f"Total distance = {total/1000:0.3f}km")
 
     return
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("source", type=Path, default="gps_fixes.csv")
+    parser.add_argument("-v", "--vehicle", type=str, default="Vehicle_1")
+    parser.add_argument("-m", "--max-gap", type=int, default=600)
+    args = parser.parse_args()
+
+    main(args.source, args.vehicle, args.max_gap)
