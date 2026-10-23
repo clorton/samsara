@@ -5,9 +5,11 @@ description = "Simulate, prep, plot, and analyze GPS trip data"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "contextily>=1.6.2",
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
     "pandas>=3.1.0",
+    "pyproj>=3.7.2",
     "requests>=2.34.2",
 ]
 

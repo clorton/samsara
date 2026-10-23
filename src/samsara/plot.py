@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 samsara.plot - plot a GPS track (lat/lon) from samsara-get-data /
-samsara-prep-data output. Installed as the ``samsara-plot`` console script.
+samsara-prep-data output, with an optional web-tile basemap underneath.
+Installed as the ``samsara-plot`` console script.
 
 Two use cases
 -------------
@@ -21,18 +22,39 @@ In both cases, the fixes passed in must already be sorted by ts ascending.
 Note that samsara-prep-data shuffles its output rows, so that CSV must be
 re-sorted by ts before plotting (``read_fixes`` below does this for you).
 
+Basemap
+-------
+By default, a web-tile basemap (Esri's World Street Map raster tiles, via
+``contextily``) is drawn under the track. This requires network access the
+first time a given tile is needed (tiles are cached locally by contextily
+afterward) - pass ``--no-basemap`` to skip it for fully offline plotting.
+Since tile providers serve Web Mercator (EPSG:3857), lat/lon fixes are
+reprojected to that CRS with ``pyproj`` before plotting; this also makes the
+plot's aspect ratio exactly correct with no latitude-dependent approximation.
+
 Usage
 -----
     samsara-plot fixes.csv -o route.png
     samsara-plot prepped.csv -o multi_trip.png
+    samsara-plot fixes.csv -o route.png --no-basemap
 """
 
 import argparse
 import csv
 import sys
 
+import contextily as cx
 import matplotlib.pyplot as plt
 import numpy as np
+from pyproj import Transformer
+
+# OpenStreetMap's own tile server (OpenStreetMap.Mapnik) enforces a strict
+# usage policy (registered User-Agent, low volume) and will return 403s for
+# casual/automated use; Esri's World Street Map tiles are free, require no
+# API key, and don't impose that restriction, so they're used as the default.
+DEFAULT_BASEMAP_SOURCE = cx.providers.Esri.WorldStreetMap
+
+_WGS84_TO_WEBMERC = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
 
 def read_fixes(path):
@@ -93,11 +115,20 @@ def split_trips(ts, gap_threshold_s=None):
     return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
 
 
-def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
+def to_web_mercator(lat, lon):
+    """Reproject WGS84 (lat, lon) degrees to Web Mercator (x, y) metres."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    x, y = _WGS84_TO_WEBMERC.transform(lon, lat)
+    return np.asarray(x), np.asarray(y)
+
+
+def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None,
+               basemap=True, basemap_source=None, basemap_zoom: int | str = "auto"):
     """
-    Plot a GPS track (longitude on x, latitude on y), splitting it into
-    separate colored trip segments wherever a time gap larger than
-    gap_threshold_s occurs (auto-detected if None).
+    Plot a GPS track, splitting it into separate colored trip segments
+    wherever a time gap larger than gap_threshold_s occurs (auto-detected
+    if None), optionally drawing a web-tile basemap underneath.
 
     Works for both contiguous single-trip data (one segment) and
     multi-trip data with dropout windows removed (one segment per
@@ -115,6 +146,15 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
         Axes to draw on; a new figure/axes is created if omitted.
     title : str, optional
         Plot title; a sensible default is used if omitted.
+    basemap : bool, optional
+        If True (default), fetch and draw a web-tile basemap underneath the
+        track via contextily. Requires network access for any tiles not
+        already cached locally. Set to False for fully offline plotting.
+    basemap_source : xyzservices.TileProvider, optional
+        Tile provider to use; defaults to OpenStreetMap's standard style.
+    basemap_zoom : int or "auto", optional
+        Tile zoom level; "auto" (default) picks one based on the plotted
+        extent.
 
     Returns
     -------
@@ -131,29 +171,38 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 8))
 
+    # Web Mercator is what basemap tiles are served in, and it's conformal
+    # (shapes/angles preserved locally), so plotting in these units avoids
+    # the need for any latitude-dependent aspect-ratio correction.
+    x, y = to_web_mercator(lat, lon)
+
     trips = split_trips(ts, gap_threshold_s)
 
     cmap = plt.get_cmap("tab10")
     for i, (s, e) in enumerate(trips):
         color = cmap(i % 10)
         label = f"Trip {i + 1} ({e - s} fixes)" if len(trips) > 1 else "Route"
-        ax.plot(lon[s:e], lat[s:e], "-", color=color, linewidth=1.5,
+        ax.plot(x[s:e], y[s:e], "-", color=color, linewidth=1.5,
                 label=label, zorder=2)
-        ax.scatter(lon[s], lat[s], color=color, marker="o", s=40,
+        ax.scatter(x[s], y[s], color=color, marker="o", s=40,
                    edgecolors="black", linewidths=0.5, zorder=3)
-        ax.scatter(lon[e - 1], lat[e - 1], color=color, marker="s", s=40,
+        ax.scatter(x[e - 1], y[e - 1], color=color, marker="s", s=40,
                    edgecolors="black", linewidths=0.5, zorder=3)
 
-    # Approximate equirectangular correction: at latitude phi, one degree
-    # of longitude spans cos(phi) as much ground distance as one degree of
-    # latitude, so compress the x-axis accordingly for a visually
-    # undistorted track.
-    mean_lat_rad = np.radians(np.mean(lat))
-    ax.set_aspect(1.0 / max(np.cos(mean_lat_rad), 1e-6), adjustable="datalim")
+    ax.set_aspect("equal", adjustable="datalim")
 
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(True, alpha=0.3)
+    if basemap:
+        cx.add_basemap(
+            ax,
+            crs="EPSG:3857",
+            source=basemap_source or DEFAULT_BASEMAP_SOURCE,
+            zoom=basemap_zoom,
+        )
+
+    ax.set_xlabel("Easting (Web Mercator, m)")
+    ax.set_ylabel("Northing (Web Mercator, m)")
+    ax.set_xticks([])
+    ax.set_yticks([])
     ax.set_title(title or (f"GPS track ({len(trips)} trips)" if len(trips) > 1
                             else "GPS track"))
     ax.legend(loc="best", fontsize="small")
@@ -162,9 +211,10 @@ def plot_fixes(ts, lat, lon, gap_threshold_s=None, ax=None, title=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Plot a GPS fixes CSV (ts, lat, lon), splitting into "
-                     "separate trip segments wherever there's a large gap "
-                     "in time (e.g. from a dropped-data window)."
+        description="Plot a GPS fixes CSV (ts, lat, lon) over a web-tile "
+                     "basemap, splitting into separate trip segments "
+                     "wherever there's a large gap in time (e.g. from a "
+                     "dropped-data window)."
     )
     ap.add_argument(
         "input", help="input fixes CSV (ts, lat, lon columns), or '-' for stdin"
@@ -179,11 +229,27 @@ def main(argv=None):
              "(default: auto-detected from the data)",
     )
     ap.add_argument("--title", default=None, help="plot title")
+    ap.add_argument(
+        "--no-basemap", dest="basemap", action="store_false",
+        help="don't fetch/draw a basemap (useful for fully offline plotting)",
+    )
+    ap.add_argument(
+        "--basemap-zoom", default="auto",
+        help="tile zoom level (integer), or 'auto' (default) to pick one "
+             "from the plotted extent",
+    )
     args = ap.parse_args(argv)
+
+    zoom = args.basemap_zoom
+    if zoom != "auto":
+        try:
+            zoom = int(zoom)
+        except ValueError:
+            ap.error("--basemap-zoom must be an integer or 'auto'")
 
     ts, lat, lon = read_fixes(args.input)
     plot_fixes(ts, lat, lon, gap_threshold_s=args.gap_threshold_s,
-               title=args.title)
+               title=args.title, basemap=args.basemap, basemap_zoom=zoom)
 
     if args.output:
         plt.savefig(args.output, dpi=150, bbox_inches="tight")
